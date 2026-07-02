@@ -1,4 +1,4 @@
-name: 美股双创套利扫描
+name: 美股热点扫描
 
 on:
   schedule:
