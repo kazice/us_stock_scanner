@@ -180,7 +180,7 @@ def get_top100(watchlist):
         amount = quote["volume"] * quote["price"]
         results.append({
             "ticker": ticker,
-            "name": info.get("name", quote["name"]),
+            "name": info.get("name", ticker),
             "sector": info.get("sector", "Unknown"),
             "industry": info.get("industry", "Unknown"),
             "price": round(quote["price"], 2),
