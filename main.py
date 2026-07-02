@@ -30,7 +30,7 @@ AMOUNT_UNIT = 1e8
 BATCH_SIZE = 200  # 新浪API单次查询上限（URL长度限制）
 
 PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN", "b6ff4f2c9949413690b7f9572acdd2a8")
-PUSHPLUS_TOPIC = os.environ.get("PUSHPLUS_TOPIC", "美股热点扫描")
+PUSHPLUS_TOPIC = os.environ.get("PUSHPLUS_TOPIC", "双创套利")
 PUSHPLUS_URL = "http://www.pushplus.plus/send"
 
 SINA_URL = "https://hq.sinajs.cn/list="
@@ -88,12 +88,12 @@ def _fetch_sp500():
     results = []
     for row_html in rows:
         cells = re.findall(r'<(?:td|th)[^>]*>(.*?)</(?:td|th)>', row_html, re.DOTALL)
-        if len(cells) < 5:
+        if len(cells) < 4:
             continue
         ticker = re.sub(r'<[^>]+>', '', cells[0]).strip().replace(".", "-")
         name = re.sub(r'<[^>]+>', '', cells[1]).strip()
-        sector = re.sub(r'<[^>]+>', '', cells[3]).strip()
-        industry = re.sub(r'<[^>]+>', '', cells[4]).strip()
+        sector = re.sub(r'<[^>]+>', '', cells[2]).strip()   # col 2 = GICS Sector
+        industry = re.sub(r'<[^>]+>', '', cells[3]).strip() # col 3 = GICS Sub-Industry
         if ticker and re.match(r'^[A-Z]{1,5}$', ticker) and ticker != "Symbol":
             results.append({"ticker": ticker, "name": name, "sector": sector or "Unknown", "industry": industry or "Unknown"})
     return results
