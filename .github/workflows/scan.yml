@@ -1,0 +1,30 @@
+name: 美股双创套利扫描
+
+on:
+  schedule:
+    # 美东9:45 = UTC 13:45 (夏令时) / 14:45 (冬令时)
+    # 这里用UTC时间，GitHub Actions cron按UTC执行
+    - cron: '45 13 * * 1-5'   # 9:45 ET 首次
+    - cron: '15 14 * * 1-5'   # 10:15 ET
+    - cron: '45 14 * * 1-5'   # 10:45 ET
+    - cron: '15 15 * * 1-5'   # 11:15 ET
+    - cron: '15 17 * * 1-5'   # 13:15 ET
+    - cron: '45 17 * * 1-5'   # 13:45 ET
+    - cron: '15 18 * * 1-5'   # 14:15 ET
+    - cron: '45 18 * * 1-5'   # 14:45 ET
+  workflow_dispatch:  # 手动触发
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Scanner
+        run: python main.py

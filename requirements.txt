@@ -1,0 +1,3 @@
+# 美股量化扫描依赖
+# 仅使用 Python 标准库 (urllib, json, math, collections, datetime, time)
+# 无需额外安装
