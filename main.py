@@ -1,17 +1,15 @@
 """
-美股量化扫描 - 三大交易所成交额Top100 行业强度分析
-基于 Yahoo Finance + GitHub Actions + pushplus 推送
+美股热点扫描 - S&P 500 成交额Top100 行业强度分析
+基于新浪财经 API + GitHub Actions + pushplus 推送
 
 核心逻辑：
-  候选池 = S&P 500 + NASDAQ 100（~600只，已覆盖绝大部分大成交额股票）
-  → 获取实时行情，按成交额排序取 Top100
+  候选池 = S&P 500 + NASDAQ 100（~600只）
+  → 新浪 API 批量获取实时行情，按成交额排序取 Top100
   → 按 GICS 行业分类统计强度得分 S = (w/n) × ln(1+n)
   → 取 Top5 行业，每个行业按成交额取 Top7 个股推送
 
-数据源：Yahoo Finance chart API（免费，无需 API Key）
-行业分类：S&P 500 Wikipedia 获取 GICS 分类
-运行环境：GitHub Actions (Ubuntu, cron 定时触发)
-推送：pushplus 群组
+数据源：新浪财经 hq.sinajs.cn（免费、国内可用、批量查询）
+行业分类：Wikipedia S&P 500 获取 GICS 分类
 """
 import time
 import json
@@ -19,44 +17,42 @@ import math
 import re
 import os
 import urllib.request
-import urllib.error
 from datetime import datetime
 from collections import defaultdict
 
 # ============================================================
 # 配置
 # ============================================================
-
 MAIN_BOARD_TOP_N = 100
 SUB_BOARD_TOP_N = 7
 TOP_INDUSTRIES = 5
 AMOUNT_UNIT = 1e8
-BATCH_SIZE = 100
+BATCH_SIZE = 200  # 新浪API单次查询上限（URL长度限制）
 
-# pushplus
 PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN", "b6ff4f2c9949413690b7f9572acdd2a8")
 PUSHPLUS_TOPIC = os.environ.get("PUSHPLUS_TOPIC", "美股热点扫描")
 PUSHPLUS_URL = "http://www.pushplus.plus/send"
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+SINA_URL = "https://hq.sinajs.cn/list="
+SINA_HEADERS = {"Referer": "https://finance.sina.com.cn"}
 WATCHLIST_FILE = "watchlist.json"
 
 # ============================================================
-# 股票池：S&P 500 + NASDAQ 100（~600只，含行业分类）
+# 股票池
 # ============================================================
 
 def build_watchlist():
-    """构建候选池，含 GICS 行业分类"""
+    """构建候选池：S&P 500（含行业）+ NASDAQ 100"""
     watchlist = {}
 
     # S&P 500（含行业分类）
     print("获取 S&P 500...")
-    sp500 = _fetch_sp500_wikipedia()
+    sp500 = _fetch_sp500()
     for item in sp500:
         watchlist[item["ticker"]] = item
     print(f"  S&P 500: {len(sp500)} 只")
 
-    # NASDAQ 100（补充行业分类缺失的）
+    # NASDAQ 100
     print("获取 NASDAQ 100...")
     nasdaq100 = _fetch_nasdaq100()
     for item in nasdaq100:
@@ -64,11 +60,7 @@ def build_watchlist():
             watchlist[item["ticker"]] = item
     print(f"  NASDAQ 100 新增: {len(watchlist) - len(sp500)} 只")
 
-    # 过滤非普通股
-    watchlist = {
-        k: v for k, v in watchlist.items()
-        if re.match(r'^[A-Z]{1,5}$', k)
-    }
+    watchlist = {k: v for k, v in watchlist.items() if re.match(r'^[A-Z]{1,5}$', k)}
     print(f"总计: {len(watchlist)} 只")
 
     with open(WATCHLIST_FILE, "w", encoding="utf-8") as f:
@@ -76,10 +68,10 @@ def build_watchlist():
     return watchlist
 
 
-def _fetch_sp500_wikipedia():
-    """从 Wikipedia 获取 S&P 500（含 GICS sector + industry）"""
+def _fetch_sp500():
+    """Wikipedia S&P 500（含 GICS sector + industry）"""
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    req = urllib.request.Request(url, headers=HEADERS)
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             html = resp.read().decode("utf-8")
@@ -87,75 +79,84 @@ def _fetch_sp500_wikipedia():
         print(f"    Wikipedia error: {e}")
         return []
 
-    # 用正则提取整个 wikitable sortable 表格
     table_match = re.search(r'<table[^>]*wikitable[^>]*>(.*?)</table>', html, re.DOTALL)
     if not table_match:
-        print("    Wikipedia: 未找到 wikitable 表格")
+        print("    Wikipedia: 未找到表格")
         return []
 
-    table_html = table_match.group(1)
-    # 找所有 <tr> 行
-    rows = re.findall(r'<tr>(.*?)</tr>', table_html, re.DOTALL)
-
+    rows = re.findall(r'<tr>(.*?)</tr>', table_match.group(1), re.DOTALL)
+    results = []
     for row_html in rows:
-        # 提取所有 <td> 或 <th> 的内容
         cells = re.findall(r'<(?:td|th)[^>]*>(.*?)</(?:td|th)>', row_html, re.DOTALL)
         if len(cells) < 5:
             continue
-        # 第1列: ticker (含链接), 第2列: name, 第4列: sector, 第5列: industry
-        ticker_raw = re.sub(r'<[^>]+>', '', cells[0]).strip()
-        ticker = ticker_raw.replace(".", "-")
+        ticker = re.sub(r'<[^>]+>', '', cells[0]).strip().replace(".", "-")
         name = re.sub(r'<[^>]+>', '', cells[1]).strip()
         sector = re.sub(r'<[^>]+>', '', cells[3]).strip()
         industry = re.sub(r'<[^>]+>', '', cells[4]).strip()
-
         if ticker and re.match(r'^[A-Z]{1,5}$', ticker) and ticker != "Symbol":
-            results.append({
-                "ticker": ticker,
-                "name": name,
-                "sector": sector or "Unknown",
-                "industry": industry or "Unknown",
-            })
+            results.append({"ticker": ticker, "name": name, "sector": sector or "Unknown", "industry": industry or "Unknown"})
     return results
 
 
 def _fetch_nasdaq100():
-    """从 NASDAQ API 获取 NASDAQ 100"""
+    """NASDAQ API 获取 NASDAQ 100"""
     url = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=110&exchange=nasdaq&marketcap=mega%7Clarge"
-    req = urllib.request.Request(url, headers={**HEADERS, "Accept": "application/json"})
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read())
     except Exception:
         return []
-
     rows = data.get("data", {}).get("table", {}).get("rows", [])
-    results = []
-    for row in rows:
-        ticker = row.get("symbol", "").strip()
-        if re.match(r'^[A-Z]{1,5}$', ticker):
-            results.append({
-                "ticker": ticker,
-                "name": row.get("name", ticker),
-                "sector": "Unknown",
-                "industry": "Unknown",
-            })
-    return results
+    return [{"ticker": r["symbol"], "name": r.get("name", r["symbol"]), "sector": "Unknown", "industry": "Unknown"}
+            for r in rows if re.match(r'^[A-Z]{1,5}$', r.get("symbol", ""))]
 
 
 # ============================================================
-# 行情获取
+# 行情获取（新浪财经）
 # ============================================================
 
-def fetch_chart(symbol):
-    """获取单只股票 Yahoo Finance 实时行情（chart API 不支持批量）"""
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1d&interval=1m&includePrePost=false"
-    req = urllib.request.Request(url, headers=HEADERS)
+def fetch_sina_batch(symbols):
+    """批量获取新浪美股行情
+    返回: {ticker: {name, price, prev_close, volume, change_pct}}
+    """
+    codes = ",".join(f"gb_{s.lower()}" for s in symbols)
+    url = SINA_URL + codes
+    req = urllib.request.Request(url, headers=SINA_HEADERS)
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read())
-    except Exception:
-        return None
+            raw = resp.read().decode("gbk")
+    except Exception as e:
+        print(f"  sina fetch error: {e}")
+        return {}
+
+    results = {}
+    for line in raw.strip().split("\n"):
+        parts = line.split('"')
+        if len(parts) < 2:
+            continue
+        ticker = parts[0].replace("var hq_str_gb_", "").replace("=", "").upper()
+        fields = parts[1].split(",")
+        if len(fields) < 11:
+            continue
+        try:
+            price = float(fields[1])
+            prev = float(fields[5])
+            volume = int(fields[10])
+            pct = float(fields[4])
+        except (ValueError, IndexError):
+            continue
+        if price <= 0 or prev <= 0:
+            continue
+        results[ticker] = {
+            "name": fields[0],
+            "price": price,
+            "prev_close": prev,
+            "volume": volume,
+            "change_pct": pct,
+        }
+    return results
 
 
 # ============================================================
@@ -163,52 +164,35 @@ def fetch_chart(symbol):
 # ============================================================
 
 def get_top100(watchlist):
-    """逐只查询，获取成交额 Top100（Yahoo chart API 不支持批量）"""
+    """新浪批量获取行情，按成交额排序取 Top100"""
     symbols = list(watchlist.keys())
-    total = len(symbols)
-    all_results = []
+    all_data = {}
 
-    for i, sym in enumerate(symbols):
-        data = fetch_chart(sym)
-        if not data:
-            continue
+    for i in range(0, len(symbols), BATCH_SIZE):
+        batch = symbols[i:i + BATCH_SIZE]
+        batch_data = fetch_sina_batch(batch)
+        all_data.update(batch_data)
+        print(f"  进度: {min(i+BATCH_SIZE, len(symbols))}/{len(symbols)}, 获取: {len(batch_data)}")
 
-        result = data.get("chart", {}).get("result")
-        if not result:
-            continue
-        # 单只返回的是 list 只有一个元素
-        r = result[0] if isinstance(result, list) else result
-        meta = r.get("meta", {})
-        ticker = meta.get("symbol", "")
-        if not ticker:
-            continue
-
-        price = meta.get("regularMarketPrice", 0)
-        prev = meta.get("chartPreviousClose", 0)
-        volume = meta.get("regularMarketVolume", 0)
-        amount = volume * price
-        if amount <= 0 or price <= 0 or prev <= 0:
-            continue
-
-        chg = (price - prev) / prev * 100
+    # 合并行业信息，计算成交额
+    results = []
+    for ticker, quote in all_data.items():
         info = watchlist.get(ticker, {})
-        all_results.append({
+        amount = quote["volume"] * quote["price"]
+        results.append({
             "ticker": ticker,
-            "name": info.get("name", ticker),
+            "name": info.get("name", quote["name"]),
             "sector": info.get("sector", "Unknown"),
             "industry": info.get("industry", "Unknown"),
-            "price": round(price, 2),
-            "prev_close": round(prev, 2),
+            "price": round(quote["price"], 2),
+            "prev_close": round(quote["prev_close"], 2),
             "amount": amount,
             "amount_yi": round(amount / AMOUNT_UNIT, 2),
-            "change_pct": round(chg, 2),
+            "change_pct": round(quote["change_pct"], 2),
         })
 
-        if (i + 1) % 50 == 0:
-            print(f"  进度: {i+1}/{total}, 有效: {len(all_results)}")
-
-    all_results.sort(key=lambda x: x["amount"], reverse=True)
-    return all_results[:MAIN_BOARD_TOP_N]
+    results.sort(key=lambda x: x["amount"], reverse=True)
+    return results[:MAIN_BOARD_TOP_N]
 
 
 def analyze_industries(stocks):
@@ -232,11 +216,7 @@ def analyze_industries(stocks):
         dominant = up if direction == "up" else down
         win_rate = dominant / n if n > 0 else 0
         score = win_rate * math.log(1 + n)
-        scores.append({
-            "name": ind_name, "direction": direction,
-            "total": n, "up": up, "down": down,
-            "score": round(score, 3), "stocks": members,
-        })
+        scores.append({"name": ind_name, "direction": direction, "total": n, "up": up, "down": down, "score": round(score, 3), "stocks": members})
 
     scores.sort(key=lambda x: x["score"], reverse=True)
     return scores[:TOP_INDUSTRIES]
@@ -268,18 +248,8 @@ def format_html(top_industries, time_str):
 
 
 def send_pushplus(date_str, time_str, html_content):
-    data = {
-        "token": PUSHPLUS_TOKEN,
-        "title": f"美股热点扫描 {date_str} {time_str}",
-        "content": html_content,
-        "template": "html",
-        "topic": PUSHPLUS_TOPIC,
-    }
-    req = urllib.request.Request(
-        PUSHPLUS_URL,
-        data=json.dumps(data).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-    )
+    data = {"token": PUSHPLUS_TOKEN, "title": f"美股热点扫描 {date_str} {time_str}", "content": html_content, "template": "html", "topic": PUSHPLUS_TOPIC}
+    req = urllib.request.Request(PUSHPLUS_URL, data=json.dumps(data).encode("utf-8"), headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             result = json.loads(resp.read())
@@ -302,7 +272,7 @@ def main():
     time_str = now.strftime("%H:%M")
     print(f"=== 美股热点扫描 [{time_str}] ===")
 
-    # 1. 加载/构建股票池
+    # 1. 股票池
     if os.path.exists(WATCHLIST_FILE):
         with open(WATCHLIST_FILE, "r", encoding="utf-8") as f:
             watchlist = json.load(f)
@@ -314,7 +284,7 @@ def main():
         print("股票池为空")
         return
 
-    # 2. 获取成交额 Top100
+    # 2. 获取行情
     print("获取行情...")
     top100 = get_top100(watchlist)
     if not top100:
