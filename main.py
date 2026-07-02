@@ -143,17 +143,17 @@ def fetch_sina_batch(symbols):
             price = float(fields[1])
             prev = float(fields[5])
             volume = int(fields[10])
-            pct = float(fields[4])
         except (ValueError, IndexError):
             continue
         if price <= 0 or prev <= 0:
             continue
+        # 涨跌幅自己算（新浪 fields[4] 是涨跌额不是涨跌幅）
+        change_pct = (price - prev) / prev * 100
         results[ticker] = {
-            "name": fields[0],
             "price": price,
             "prev_close": prev,
             "volume": volume,
-            "change_pct": pct,
+            "change_pct": change_pct,
         }
     return results
 
