@@ -35,7 +35,7 @@ BATCH_SIZE = 100
 
 # pushplus
 PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN", "b6ff4f2c9949413690b7f9572acdd2a8")
-PUSHPLUS_TOPIC = os.environ.get("PUSHPLUS_TOPIC", "双创套利")
+PUSHPLUS_TOPIC = os.environ.get("PUSHPLUS_TOPIC", "美股热点扫描")
 PUSHPLUS_URL = "http://www.pushplus.plus/send"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -245,7 +245,7 @@ def analyze_industries(stocks):
 def format_html(top_industries, time_str):
     if not top_industries:
         return None
-    html = f"<h3>美股扫描 {time_str}</h3>"
+    html = f"<h3>美股热点扫描 {time_str}</h3>"
     for ind in top_industries:
         is_up = ind["direction"] == "up"
         color = "#ff4444" if is_up else "#00aa00"
@@ -266,7 +266,7 @@ def format_html(top_industries, time_str):
 def send_pushplus(date_str, time_str, html_content):
     data = {
         "token": PUSHPLUS_TOKEN,
-        "title": f"美股扫描 {date_str} {time_str}",
+        "title": f"美股热点扫描 {date_str} {time_str}",
         "content": html_content,
         "template": "html",
         "topic": PUSHPLUS_TOPIC,
@@ -296,7 +296,7 @@ def main():
     now = datetime.now()
     date_str = now.strftime("%Y-%m-%d")
     time_str = now.strftime("%H:%M")
-    print(f"=== 美股扫描 [{time_str}] ===")
+    print(f"=== 美股热点扫描 [{time_str}] ===")
 
     # 1. 加载/构建股票池
     if os.path.exists(WATCHLIST_FILE):

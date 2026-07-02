@@ -1,4 +1,4 @@
-# 美股双创套利扫描
+# 美股热点扫描
 
 基于 Yahoo Finance + GitHub Actions + pushplus 的免费美股量化扫描工具。
 
