@@ -87,28 +87,35 @@ def _fetch_sp500_wikipedia():
         print(f"    Wikipedia error: {e}")
         return []
 
-    results = []
-    in_table = False
-    for line in html.split("\n"):
-        if '<table class="wikitable' in line:
-            in_table = True
+    # 用正则提取整个 wikitable sortable 表格
+    table_match = re.search(r'<table[^>]*wikitable[^>]*>(.*?)</table>', html, re.DOTALL)
+    if not table_match:
+        print("    Wikipedia: 未找到 wikitable 表格")
+        return []
+
+    table_html = table_match.group(1)
+    # 找所有 <tr> 行
+    rows = re.findall(r'<tr>(.*?)</tr>', table_html, re.DOTALL)
+
+    for row_html in rows:
+        # 提取所有 <td> 或 <th> 的内容
+        cells = re.findall(r'<(?:td|th)[^>]*>(.*?)</(?:td|th)>', row_html, re.DOTALL)
+        if len(cells) < 5:
             continue
-        if in_table and "</table>" in line:
-            break
-        if in_table and "<td>" in line:
-            td_match = re.findall(r'<td[^>]*>(.*?)</td>', line, re.DOTALL)
-            if len(td_match) >= 5:
-                ticker = re.sub(r'<[^>]+>', '', td_match[0]).strip().replace(".", "-")
-                name = re.sub(r'<[^>]+>', '', td_match[1]).strip()
-                sector = re.sub(r'<[^>]+>', '', td_match[3]).strip()
-                industry = re.sub(r'<[^>]+>', '', td_match[4]).strip()
-                if ticker and re.match(r'^[A-Z]{1,5}$', ticker):
-                    results.append({
-                        "ticker": ticker,
-                        "name": name,
-                        "sector": sector or "Unknown",
-                        "industry": industry or "Unknown",
-                    })
+        # 第1列: ticker (含链接), 第2列: name, 第4列: sector, 第5列: industry
+        ticker_raw = re.sub(r'<[^>]+>', '', cells[0]).strip()
+        ticker = ticker_raw.replace(".", "-")
+        name = re.sub(r'<[^>]+>', '', cells[1]).strip()
+        sector = re.sub(r'<[^>]+>', '', cells[3]).strip()
+        industry = re.sub(r'<[^>]+>', '', cells[4]).strip()
+
+        if ticker and re.match(r'^[A-Z]{1,5}$', ticker) and ticker != "Symbol":
+            results.append({
+                "ticker": ticker,
+                "name": name,
+                "sector": sector or "Unknown",
+                "industry": industry or "Unknown",
+            })
     return results
 
 
@@ -140,16 +147,14 @@ def _fetch_nasdaq100():
 # 行情获取
 # ============================================================
 
-def fetch_batch_chart(symbols):
-    """批量获取 Yahoo Finance 实时行情"""
-    s = ",".join(symbols)
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{s}?range=1d&interval=1m&includePrePost=false"
+def fetch_chart(symbol):
+    """获取单只股票 Yahoo Finance 实时行情（chart API 不支持批量）"""
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1d&interval=1m&includePrePost=false"
     req = urllib.request.Request(url, headers=HEADERS)
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=15) as resp:
             return json.loads(resp.read())
-    except Exception as e:
-        print(f"  fetch error: {e}")
+    except Exception:
         return None
 
 
@@ -158,50 +163,49 @@ def fetch_batch_chart(symbols):
 # ============================================================
 
 def get_top100(watchlist):
-    """从候选池中获取成交额 Top100"""
+    """逐只查询，获取成交额 Top100（Yahoo chart API 不支持批量）"""
     symbols = list(watchlist.keys())
+    total = len(symbols)
     all_results = []
 
-    for i in range(0, len(symbols), BATCH_SIZE):
-        batch = symbols[i:i + BATCH_SIZE]
-        data = fetch_batch_chart(batch)
+    for i, sym in enumerate(symbols):
+        data = fetch_chart(sym)
         if not data:
             continue
 
         result = data.get("chart", {}).get("result")
         if not result:
             continue
-        if isinstance(result, dict):
-            result = [result]
+        # 单只返回的是 list 只有一个元素
+        r = result[0] if isinstance(result, list) else result
+        meta = r.get("meta", {})
+        ticker = meta.get("symbol", "")
+        if not ticker:
+            continue
 
-        for r in result:
-            meta = r.get("meta", {})
-            ticker = meta.get("symbol", "")
-            if not ticker:
-                continue
-            price = meta.get("regularMarketPrice", 0)
-            prev = meta.get("chartPreviousClose", 0)
-            volume = meta.get("regularMarketVolume", 0)
-            amount = volume * price
-            if amount <= 0 or price <= 0 or prev <= 0:
-                continue
+        price = meta.get("regularMarketPrice", 0)
+        prev = meta.get("chartPreviousClose", 0)
+        volume = meta.get("regularMarketVolume", 0)
+        amount = volume * price
+        if amount <= 0 or price <= 0 or prev <= 0:
+            continue
 
-            chg = (price - prev) / prev * 100
-            info = watchlist.get(ticker, {})
-            all_results.append({
-                "ticker": ticker,
-                "name": info.get("name", ticker),
-                "sector": info.get("sector", "Unknown"),
-                "industry": info.get("industry", "Unknown"),
-                "price": round(price, 2),
-                "prev_close": round(prev, 2),
-                "amount": amount,
-                "amount_yi": round(amount / AMOUNT_UNIT, 2),
-                "change_pct": round(chg, 2),
-            })
+        chg = (price - prev) / prev * 100
+        info = watchlist.get(ticker, {})
+        all_results.append({
+            "ticker": ticker,
+            "name": info.get("name", ticker),
+            "sector": info.get("sector", "Unknown"),
+            "industry": info.get("industry", "Unknown"),
+            "price": round(price, 2),
+            "prev_close": round(prev, 2),
+            "amount": amount,
+            "amount_yi": round(amount / AMOUNT_UNIT, 2),
+            "change_pct": round(chg, 2),
+        })
 
-        print(f"  进度: {min(i+BATCH_SIZE, len(symbols))}/{len(symbols)}, 有效: {len(all_results)}")
-        time.sleep(0.3)
+        if (i + 1) % 50 == 0:
+            print(f"  进度: {i+1}/{total}, 有效: {len(all_results)}")
 
     all_results.sort(key=lambda x: x["amount"], reverse=True)
     return all_results[:MAIN_BOARD_TOP_N]
