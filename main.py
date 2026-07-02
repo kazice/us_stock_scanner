@@ -30,7 +30,6 @@ AMOUNT_UNIT = 1e8
 BATCH_SIZE = 200  # 新浪API单次查询上限（URL长度限制）
 
 PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN", "b6ff4f2c9949413690b7f9572acdd2a8")
-PUSHPLUS_TOPIC = os.environ.get("PUSHPLUS_TOPIC", "双创套利")
 PUSHPLUS_URL = "http://www.pushplus.plus/send"
 
 SINA_URL = "https://hq.sinajs.cn/list="
@@ -248,7 +247,7 @@ def format_html(top_industries, time_str):
 
 
 def send_pushplus(date_str, time_str, html_content):
-    data = {"token": PUSHPLUS_TOKEN, "title": f"美股热点扫描 {date_str} {time_str}", "content": html_content, "template": "html", "topic": PUSHPLUS_TOPIC}
+    data = {"token": PUSHPLUS_TOKEN, "title": f"美股热点扫描 {date_str} {time_str}", "content": html_content, "template": "html"}
     req = urllib.request.Request(PUSHPLUS_URL, data=json.dumps(data).encode("utf-8"), headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
