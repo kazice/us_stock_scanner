@@ -16,16 +16,18 @@ import json
 import math
 import re
 import os
+import html
 import urllib.request
 from datetime import datetime
 from collections import defaultdict
+from translations import translate_sector, translate_industry, translate_company
 
 # ============================================================
 # 配置
 # ============================================================
 MAIN_BOARD_TOP_N = 100
 SUB_BOARD_TOP_N = 7
-TOP_INDUSTRIES = 5
+TOP_INDUSTRIES = 6
 AMOUNT_UNIT = 1e8
 BATCH_SIZE = 200  # 新浪API单次查询上限（URL长度限制）
 
@@ -73,12 +75,12 @@ def _fetch_sp500():
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
-            html = resp.read().decode("utf-8")
+            page_html = resp.read().decode("utf-8")
     except Exception as e:
         print(f"    Wikipedia error: {e}")
         return []
 
-    table_match = re.search(r'<table[^>]*wikitable[^>]*>(.*?)</table>', html, re.DOTALL)
+    table_match = re.search(r'<table[^>]*wikitable[^>]*>(.*?)</table>', page_html, re.DOTALL)
     if not table_match:
         print("    Wikipedia: 未找到表格")
         return []
@@ -91,10 +93,13 @@ def _fetch_sp500():
             continue
         ticker = re.sub(r'<[^>]+>', '', cells[0]).strip().replace(".", "-")
         name = re.sub(r'<[^>]+>', '', cells[1]).strip()
-        sector = re.sub(r'<[^>]+>', '', cells[2]).strip()   # col 2 = GICS Sector
-        industry = re.sub(r'<[^>]+>', '', cells[3]).strip() # col 3 = GICS Sub-Industry
+        sector_en = html.unescape(re.sub(r'<[^>]+>', '', cells[2]).strip())   # col 2 = GICS Sector
+        industry_en = html.unescape(re.sub(r'<[^>]+>', '', cells[3]).strip()) # col 3 = GICS Sub-Industry
         if ticker and re.match(r'^[A-Z]{1,5}$', ticker) and ticker != "Symbol":
-            results.append({"ticker": ticker, "name": name, "sector": sector or "Unknown", "industry": industry or "Unknown"})
+            sector_cn = translate_sector(sector_en) if sector_en else "未知"
+            industry_cn = translate_industry(industry_en) if industry_en else "未知"
+            name_cn = translate_company(ticker, name)
+            results.append({"ticker": ticker, "name": name_cn, "sector": sector_cn, "industry": industry_cn})
     return results
 
 
@@ -108,7 +113,8 @@ def _fetch_nasdaq100():
     except Exception:
         return []
     rows = data.get("data", {}).get("table", {}).get("rows", [])
-    return [{"ticker": r["symbol"], "name": r.get("name", r["symbol"]), "sector": "Unknown", "industry": "Unknown"}
+    return [{"ticker": r["symbol"], "name": translate_company(r["symbol"], r.get("name", r["symbol"])),
+             "sector": "未知", "industry": "未知"}
             for r in rows if re.match(r'^[A-Z]{1,5}$', r.get("symbol", ""))]
 
 
@@ -118,20 +124,21 @@ def _fetch_nasdaq100():
 
 def fetch_sina_batch(symbols):
     """批量获取新浪美股行情
-    返回: {ticker: {name, price, prev_close, volume, change_pct}}
+    返回: {ticker: {cn_name, price, prev_close, volume, change_pct}}
     """
     codes = ",".join(f"gb_{s.lower()}" for s in symbols)
     url = SINA_URL + codes
     req = urllib.request.Request(url, headers=SINA_HEADERS)
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            raw = resp.read().decode("gbk")
+            raw = resp.read()
+            text = raw.decode("gbk", errors="replace")
     except Exception as e:
         print(f"  sina fetch error: {e}")
         return {}
 
     results = {}
-    for line in raw.strip().split("\n"):
+    for line in text.strip().split("\n"):
         parts = line.split('"')
         if len(parts) < 2:
             continue
@@ -147,9 +154,14 @@ def fetch_sina_batch(symbols):
             continue
         if price <= 0 or prev <= 0:
             continue
-        # 涨跌幅自己算（新浪 fields[4] 是涨跌额不是涨跌幅）
+        # 涨跌幅自己算
         change_pct = (price - prev) / prev * 100
+        # 中文名：截断过长名称（去掉公司后缀）
+        cn_name = fields[0].strip()
+        if len(cn_name) > 12:
+            cn_name = cn_name[:12]
         results[ticker] = {
+            "cn_name": cn_name,
             "price": price,
             "prev_close": prev,
             "volume": volume,
@@ -178,11 +190,13 @@ def get_top100(watchlist):
     for ticker, quote in all_data.items():
         info = watchlist.get(ticker, {})
         amount = quote["volume"] * quote["price"]
+        # 优先用映射表中的中文名，其次用 watchlist 中的名字
+        cn_name = translate_company(ticker, info.get("name", ticker))
         results.append({
             "ticker": ticker,
-            "name": info.get("name", ticker),
-            "sector": info.get("sector", "Unknown"),
-            "industry": info.get("industry", "Unknown"),
+            "name": cn_name,
+            "sector": info.get("sector", "未知"),
+            "industry": info.get("industry", "未知"),
             "price": round(quote["price"], 2),
             "prev_close": round(quote["prev_close"], 2),
             "amount": amount,
@@ -201,8 +215,8 @@ def analyze_industries(stocks):
 
     groups = defaultdict(list)
     for s in stocks:
-        ind = s["industry"] if s["industry"] != "Unknown" else s["sector"]
-        if ind == "Unknown":
+        ind = s["industry"] if s["industry"] != "未知" else s["sector"]
+        if ind == "未知":
             ind = "其他"
         groups[ind].append(s)
 
