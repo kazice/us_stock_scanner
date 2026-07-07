@@ -20,7 +20,7 @@ import html
 import urllib.request
 from datetime import datetime
 from collections import defaultdict
-from translations import translate_sector, translate_industry, translate_company
+from translations import translate_sector, translate_industry, translate_company, get_stock_meta
 
 # ============================================================
 # 配置
@@ -61,8 +61,10 @@ def build_watchlist():
             watchlist[item["ticker"]] = item
     print(f"  NASDAQ 100 新增: {len(watchlist) - len(sp500)} 只")
 
-    watchlist = {k: v for k, v in watchlist.items() if re.match(r'^[A-Z]{1,5}$', k)}
+    _enrich_watchlist(watchlist)
+    watchlist = {k: v for k, v in watchlist.items() if _is_common_stock_candidate(k, v.get("name", ""))}
     print(f"总计: {len(watchlist)} 只")
+    _log_unknown_industries(watchlist)
 
     with open(WATCHLIST_FILE, "w", encoding="utf-8") as f:
         json.dump(watchlist, f, ensure_ascii=False)
@@ -113,9 +115,58 @@ def _fetch_nasdaq100():
     except Exception:
         return []
     rows = data.get("data", {}).get("table", {}).get("rows", [])
-    return [{"ticker": r["symbol"], "name": translate_company(r["symbol"], r.get("name", r["symbol"])),
-             "sector": "未知", "industry": "未知"}
-            for r in rows if re.match(r'^[A-Z]{1,5}$', r.get("symbol", ""))]
+    results = []
+    for r in rows:
+        ticker = r.get("symbol", "")
+        raw_name = r.get("name", ticker)
+        if not _is_common_stock_candidate(ticker, raw_name):
+            continue
+        meta = get_stock_meta(ticker)
+        results.append({
+            "ticker": ticker,
+            "name": translate_company(ticker, raw_name),
+            "sector": meta.get("sector", "未知"),
+            "industry": meta.get("industry", "未知"),
+        })
+    return results
+
+
+def _is_common_stock_candidate(ticker, name):
+    """过滤 NASDAQ screener 混入的优先股、存托凭证单位等非普通股。"""
+    if not re.match(r'^[A-Z]{1,5}$', ticker or ""):
+        return False
+    lowered = (name or "").lower()
+    blocked_terms = (
+        "preferred stock",
+        "mandatory convertible",
+        "depositary shares representing",
+        "tangible equity unit",
+        " warrant",
+        " rights",
+        " units",
+    )
+    return not any(term in lowered for term in blocked_terms)
+
+
+def _enrich_watchlist(watchlist):
+    for ticker, info in watchlist.items():
+        meta = get_stock_meta(ticker)
+        if meta:
+            if info.get("sector", "未知") == "未知":
+                info["sector"] = meta.get("sector", info.get("sector", "未知"))
+            if info.get("industry", "未知") == "未知":
+                info["industry"] = meta.get("industry", info.get("industry", "未知"))
+        info["name"] = translate_company(ticker, info.get("name", ticker))
+    return watchlist
+
+
+def _log_unknown_industries(watchlist):
+    unknown = [ticker for ticker, info in watchlist.items()
+               if info.get("sector", "未知") == "未知" and info.get("industry", "未知") == "未知"]
+    if unknown:
+        print(f"  未补行业: {len(unknown)} 只 -> {', '.join(unknown[:30])}")
+    else:
+        print("  行业信息: 已全部补齐")
 
 
 # ============================================================
@@ -190,8 +241,9 @@ def get_top100(watchlist):
     for ticker, quote in all_data.items():
         info = watchlist.get(ticker, {})
         amount = quote["volume"] * quote["price"]
-        # 优先用映射表中的中文名，其次用 watchlist 中的名字
-        cn_name = translate_company(ticker, info.get("name", ticker))
+        # 优先用映射表，其次用 watchlist，最后用新浪返回名或 ticker
+        fallback_name = info.get("name") or quote.get("cn_name") or ticker
+        cn_name = translate_company(ticker, fallback_name)
         results.append({
             "ticker": ticker,
             "name": cn_name,
@@ -289,7 +341,10 @@ def main():
     if os.path.exists(WATCHLIST_FILE):
         with open(WATCHLIST_FILE, "r", encoding="utf-8") as f:
             watchlist = json.load(f)
+        _enrich_watchlist(watchlist)
+        watchlist = {k: v for k, v in watchlist.items() if _is_common_stock_candidate(k, v.get("name", ""))}
         print(f"加载缓存股票池: {len(watchlist)} 只")
+        _log_unknown_industries(watchlist)
     else:
         watchlist = build_watchlist()
 

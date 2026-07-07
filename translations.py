@@ -161,6 +161,33 @@ INDUSTRY_CN = {
 }
 
 # ============================================================
+# 非 S&P 500 / 热门股票 补充行业映射
+# ============================================================
+STOCK_META_CN = {
+    # NASDAQ 100 / 大型 ADR
+    "ASML": {"sector": "信息技术", "industry": "半导体设备"},
+    "ARM": {"sector": "信息技术", "industry": "半导体"},
+    "SHOP": {"sector": "信息技术", "industry": "应用软件"},
+    "PDD": {"sector": "非必需消费品", "industry": "综合零售"},
+    "SNY": {"sector": "医疗保健", "industry": "制药"},
+    "MELI": {"sector": "非必需消费品", "industry": "综合零售"},
+    "NTES": {"sector": "通讯服务", "industry": "互动家庭娱乐"},
+    "ALAB": {"sector": "信息技术", "industry": "半导体"},
+    "ARGX": {"sector": "医疗保健", "industry": "生物技术"},
+    "RKLB": {"sector": "工业", "industry": "航空航天与国防"},
+    "MDLN": {"sector": "医疗保健", "industry": "医疗用品"},
+    "NBIS": {"sector": "信息技术", "industry": "互联网服务与基础设施"},
+    "FER": {"sector": "工业", "industry": "建筑工程"},
+    "CCEP": {"sector": "必需消费品", "industry": "软饮料"},
+    "CBRS": {"sector": "信息技术", "industry": "半导体"},
+    "CRDO": {"sector": "信息技术", "industry": "半导体"},
+
+    # 近期新增/热门美股
+    "SPCX": {"sector": "ETF", "industry": "SPAC ETF"},
+    "CRWV": {"sector": "信息技术", "industry": "互联网服务与基础设施"},
+}
+
+# ============================================================
 # S&P 500 公司名 中文映射 (ticker → 中文名)
 # ============================================================
 COMPANY_CN = {
@@ -760,10 +787,36 @@ COMPANY_CN = {
 
     # 近期新增/热门美股
     "SPCX": "SPAC新股ETF",
-    "NBIS": "星链卫星通信",
-    "CRWV": "核心波动率ETF",
-    "ALAB": "Astera Labs",
+    "NBIS": "Nebius集团",
+    "CRWV": "CoreWeave",
+    "ALAB": "Astera实验室",
     "RKLB": "火箭实验室",
+    "ECHO": "EchoStar",
+    "FDXF": "联邦快递货运",
+    "HONA": "霍尼韦尔航空航天",
+    "PSKY": "派拉蒙天舞",
+    "Q": "Qnity电子",
+    "SNDK": "闪迪",
+    "SJM": "JM斯马克",
+    "SW": "Smurfit Westrock",
+    "SOLV": "Solventum",
+    "STLD": "Steel Dynamics",
+    "TDY": "Teledyne科技",
+    "TKO": "TKO集团",
+    "VEEV": "Veeva系统",
+    "VRT": "维谛技术",
+    "VTRS": "晖致",
+    "WEC": "WEC能源",
+    "WSM": "威廉索诺玛",
+    "SHOP": "Shopify",
+    "SNY": "赛诺菲",
+    "NTES": "网易",
+    "ARGX": "argenx",
+    "MDLN": "Medline",
+    "FER": "Ferrovial",
+    "CCEP": "可口可乐欧洲太平洋",
+    "CBRS": "Cerebras",
+    "CRDO": "Credo科技",
 }
 
 
@@ -784,3 +837,8 @@ def translate_industry(en_name: str) -> str:
 def translate_company(ticker: str, en_name: str) -> str:
     """翻译公司名，优先用映射表，找不到保留英文"""
     return COMPANY_CN.get(ticker.upper(), en_name)
+
+
+def get_stock_meta(ticker: str) -> dict:
+    """获取补充行业映射"""
+    return STOCK_META_CN.get(ticker.upper(), {})
