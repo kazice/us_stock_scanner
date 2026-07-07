@@ -20,7 +20,7 @@ import html
 import urllib.request
 from datetime import datetime
 from collections import defaultdict
-from translations import translate_sector, translate_industry, translate_company, get_stock_meta
+from translations import translate_sector, translate_industry, translate_company, translate_company_from_candidates, get_stock_meta
 
 # ============================================================
 # 配置
@@ -258,9 +258,8 @@ def get_top100(watchlist):
     for ticker, quote in all_data.items():
         info = watchlist.get(ticker, {})
         amount = quote["volume"] * quote["price"]
-        # 优先用映射表，其次用 watchlist，最后用新浪返回名或 ticker
-        fallback_name = info.get("name") or quote.get("cn_name") or ticker
-        cn_name = translate_company(ticker, fallback_name)
+        # 优先选真正含中文的名字：映射表 -> 新浪行情名 -> watchlist 名 -> ticker
+        cn_name = translate_company_from_candidates(ticker, quote.get("cn_name"), info.get("name"), ticker)
         sector, industry = _resolve_sector_industry(ticker, info)
         results.append({
             "ticker": ticker,

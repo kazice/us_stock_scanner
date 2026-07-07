@@ -2,6 +2,7 @@
 美股行业 & 公司名 中英文映射表
 用于 main.py 中替换英文名为中文名，方便阅读
 """
+import re
 
 # ============================================================
 # GICS Sector 中文映射
@@ -914,6 +915,14 @@ COMPANY_CN = {
     "CCEP": "可口可乐欧洲太平洋",
     "CBRS": "Cerebras",
     "CRDO": "Credo科技",
+
+    # 中文兜底覆盖：这些 ticker 的上游名称常返回英文
+    "HOOD": "罗宾汉",
+    "APP": "爱普洛文",
+    "PLTR": "帕兰提尔",
+    "DDOG": "数据狗",
+    "SHOP": "Shopify电商",
+    "ARGX": "argenx生物",
 }
 
 
@@ -932,8 +941,24 @@ def translate_industry(en_name: str) -> str:
 
 
 def translate_company(ticker: str, en_name: str) -> str:
-    """翻译公司名，优先用映射表，找不到保留英文"""
-    return COMPANY_CN.get(ticker.upper(), en_name)
+    """翻译公司名，优先返回真正的中文名。"""
+    return translate_company_from_candidates(ticker, en_name)
+
+
+def translate_company_from_candidates(ticker: str, *names: str) -> str:
+    """按映射表、行情中文名、数据源名称的顺序挑选公司名。"""
+    candidates = [COMPANY_CN.get(ticker.upper()), *names, ticker]
+    for name in candidates:
+        if _has_chinese(name):
+            return name
+    for name in candidates:
+        if name:
+            return name
+    return ticker
+
+
+def _has_chinese(value: str) -> bool:
+    return isinstance(value, str) and re.search(r'[\u4e00-\u9fff]', value) is not None
 
 
 def get_stock_meta(ticker: str) -> dict:
