@@ -37,6 +37,7 @@ PUSHPLUS_URL = "http://www.pushplus.plus/send"
 SINA_URL = "https://hq.sinajs.cn/list="
 SINA_HEADERS = {"Referer": "https://finance.sina.com.cn"}
 WATCHLIST_FILE = "watchlist.json"
+UNKNOWN_LABELS = {"", "未知", "其他", "Other", "Unknown", "N/A", "None", "鏈煡", None}
 
 # ============================================================
 # 股票池
@@ -152,17 +153,33 @@ def _enrich_watchlist(watchlist):
     for ticker, info in watchlist.items():
         meta = get_stock_meta(ticker)
         if meta:
-            if info.get("sector", "未知") == "未知":
-                info["sector"] = meta.get("sector", info.get("sector", "未知"))
-            if info.get("industry", "未知") == "未知":
-                info["industry"] = meta.get("industry", info.get("industry", "未知"))
+            # 本地映射是兜底权威源：只要存在就覆盖，避免外部源失败或旧缓存把大票归到“其他”。
+            info["sector"] = meta.get("sector", info.get("sector", "未知"))
+            info["industry"] = meta.get("industry", info.get("industry", "未知"))
         info["name"] = translate_company(ticker, info.get("name", ticker))
     return watchlist
 
 
+def _is_unknown_label(value):
+    if isinstance(value, str):
+        value = value.strip()
+    return value in UNKNOWN_LABELS
+
+
+def _resolve_sector_industry(ticker, info):
+    meta = get_stock_meta(ticker)
+    sector = meta.get("sector") or info.get("sector", "未知")
+    industry = meta.get("industry") or info.get("industry", "未知")
+    if _is_unknown_label(sector):
+        sector = "未知"
+    if _is_unknown_label(industry):
+        industry = "未知"
+    return sector, industry
+
+
 def _log_unknown_industries(watchlist):
     unknown = [ticker for ticker, info in watchlist.items()
-               if info.get("sector", "未知") == "未知" and info.get("industry", "未知") == "未知"]
+               if _is_unknown_label(info.get("sector", "未知")) and _is_unknown_label(info.get("industry", "未知"))]
     if unknown:
         print(f"  未补行业: {len(unknown)} 只 -> {', '.join(unknown[:30])}")
     else:
@@ -244,11 +261,12 @@ def get_top100(watchlist):
         # 优先用映射表，其次用 watchlist，最后用新浪返回名或 ticker
         fallback_name = info.get("name") or quote.get("cn_name") or ticker
         cn_name = translate_company(ticker, fallback_name)
+        sector, industry = _resolve_sector_industry(ticker, info)
         results.append({
             "ticker": ticker,
             "name": cn_name,
-            "sector": info.get("sector", "未知"),
-            "industry": info.get("industry", "未知"),
+            "sector": sector,
+            "industry": industry,
             "price": round(quote["price"], 2),
             "prev_close": round(quote["prev_close"], 2),
             "amount": amount,
@@ -267,8 +285,11 @@ def analyze_industries(stocks):
 
     groups = defaultdict(list)
     for s in stocks:
-        ind = s["industry"] if s["industry"] != "未知" else s["sector"]
-        if ind == "未知":
+        sector, industry = _resolve_sector_industry(s["ticker"], s)
+        s["sector"] = sector
+        s["industry"] = industry
+        ind = industry if not _is_unknown_label(industry) else sector
+        if _is_unknown_label(ind):
             ind = "其他"
         groups[ind].append(s)
 
